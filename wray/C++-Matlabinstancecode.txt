@@ -1,0 +1,169 @@
+void FunctionalMap::refineBaseFcns()
+		{			
+			if((!m_engine && !(m_engine = engOpen(NULL))))
+				return;
+
+			engSetVisible(m_engine,1);
+
+			const int totalElements0 = m_d[0].m_L->m_nVertices + (m_d[0].m_entity->getMesh())->n_edges()* 2;//20131112
+			const int totalElements1 = m_d[1].m_L->m_nVertices + (m_d[1].m_entity->getMesh())->n_edges()* 2;//20131112
+			
+			mxArray* eigValueAObj, *eigValueBObj, *eigVectorAObj, *eigVectorBObj, *funcAObj, *funcBObj, *nBasesObj;
+			mxArray* nKprimObj, *nKObj;//20131106
+			mxArray* areaWeightAObj, *areaWeightBObj;//20131106，存放面积的倒数，Laplacian算子的权
+			mxArray* L_WXObj, *L_WYObj;//20131112，保存拉普拉斯矩阵L=D^{-1}W中的W
+
+ 			eigValueAObj = mxCreateDoubleMatrix(m_nBasesA, 1, mxREAL);//列向量
+ 			eigValueBObj = mxCreateDoubleMatrix(m_nBasesB, 1, mxREAL);//列向量
+			eigVectorAObj= mxCreateDoubleMatrix(m_d[0].m_L->m_nVertices, m_nBasesA, mxREAL);//Nx*s(Nx网格顶点数，特征向量个数)
+			eigVectorBObj= mxCreateDoubleMatrix(m_d[1].m_L->m_nVertices, m_nBasesB, mxREAL);
+			funcAObj     = mxCreateDoubleMatrix(m_d[0].m_L->m_nVertices, m_corData.size(), mxREAL);
+			funcBObj     = mxCreateDoubleMatrix(m_d[1].m_L->m_nVertices, m_corData.size(), mxREAL);
+			nBasesObj    = mxCreateNumericMatrix(1,1,mxINT32_CLASS, mxREAL);
+			nKprimObj    = mxCreateNumericMatrix(1,1,mxINT32_CLASS, mxREAL);//20131106
+			nKObj        = mxCreateNumericMatrix(1,1,mxINT32_CLASS, mxREAL);//20131106
+			areaWeightAObj = mxCreateDoubleMatrix(m_d[0].m_L->m_nVertices, 1, mxREAL);//20131106
+			areaWeightBObj = mxCreateDoubleMatrix(m_d[1].m_L->m_nVertices, 1, mxREAL);//20131106
+			L_WXObj      = mxCreateSparse(m_d[0].m_L->m_nVertices,m_d[0].m_L->m_nVertices,totalElements0,mxREAL);//20131112
+			L_WYObj      = mxCreateSparse(m_d[1].m_L->m_nVertices,m_d[1].m_L->m_nVertices,totalElements1,mxREAL);//20131112
+
+
+			int nBases   = qMin(m_nBasesB, m_nBasesA);
+			int Kprim    = 30;//20131106
+			int K        = 20;//20131106
+
+			memcpy(mxGetPr(eigValueAObj), m_d[0].m_L->m_eigenValue, sizeof(double) * m_nBasesA);
+			memcpy(mxGetPr(eigValueBObj), m_d[1].m_L->m_eigenValue, sizeof(double) * m_nBasesB);
+			memcpy(mxGetPr(eigVectorAObj), m_d[0].m_L->m_eigenVector, sizeof(double) * m_nBasesA * m_d[0].m_L->m_nVertices);
+			memcpy(mxGetPr(eigVectorBObj), m_d[1].m_L->m_eigenVector, sizeof(double) * m_nBasesB * m_d[1].m_L->m_nVertices);
+			double* funcAPtr = mxGetPr(funcAObj);
+			double* funcBPtr = mxGetPr(funcBObj);
+			float * funcABuf = m_d[0].m_distMat.data();//距离函数列向量，行数=顶点数，20131021
+			float * funcBBuf = m_d[1].m_distMat.data();//距离函数列向量，行数=顶点数，20131021
+			for (int i = 0; i < m_d[0].m_L->m_nVertices * m_corData.size(); ++i)
+				funcAPtr[i] = funcABuf[i];
+			for (int i = 0; i < m_d[1].m_L->m_nVertices * m_corData.size(); ++i)
+				funcBPtr[i] = funcBBuf[i];
+			memcpy(mxGetPr(areaWeightAObj), m_d[0].m_L->m_area, sizeof(double)*m_d[0].m_L->m_nVertices);//20131106
+			memcpy(mxGetPr(areaWeightBObj), m_d[1].m_L->m_area, sizeof(double)*m_d[1].m_L->m_nVertices);//20131106
+
+			//20121112
+			//第一个网格
+			double* start_of_pr0 = (double *)mxGetPr(L_WXObj); //把实部向量pr放到start_of_pr //20121112
+			memcpy(start_of_pr0, m_d[0].m_L->m_laplacianData, totalElements0*sizeof(double));//20121112
+
+			// Place ir data into the newly created sparse array. 
+			int* start_of_ir0 = (int *)mxGetIr(L_WXObj); //ir行号向量//20121112
+			memcpy(start_of_ir0, m_d[0].m_L->m_laplacianRowID, totalElements0*sizeof(int));//20121112
+
+			// Place jc data into the newly created sparse array. 
+			int* start_of_jc0 = (int *)mxGetJc(L_WXObj); //jc非零元的列号向量//20121112
+			memcpy(start_of_jc0, m_d[0].m_L->m_laplacianRowRange, (m_d[0].m_L->m_nVertices+1)*sizeof(int));//20121112
+
+			//第二个网格,20131112
+			double* start_of_pr1 = (double *)mxGetPr(L_WYObj); //把实部向量pr放到start_of_pr//20121112
+			memcpy(start_of_pr1, m_d[1].m_L->m_laplacianData, totalElements1*sizeof(double));//20121112
+
+			// Place ir data into the newly created sparse array. 
+			int* start_of_ir1 = (int *)mxGetIr(L_WYObj); //ir行号向量//20121112
+			memcpy(start_of_ir1, m_d[1].m_L->m_laplacianRowID, totalElements1*sizeof(int));//20121112
+
+			// Place jc data into the newly created sparse array. 
+			int* start_of_jc1 = (int *)mxGetJc(L_WYObj); //jc非零元的列号向量//20121112
+			memcpy(start_of_jc1, m_d[1].m_L->m_laplacianRowRange, (m_d[1].m_L->m_nVertices+1)*sizeof(int));//20121112
+
+			// ... Use the sparse array in some fashion. */
+			engPutVariable(m_engine, "WX1", L_WXObj);//把laplacian矩阵（稀疏矩阵）传给matlab //20121112
+			engPutVariable(m_engine, "WY1", L_WYObj);//把laplacian矩阵（稀疏矩阵）传给matlab //20121112
+
+// 			memcpy(,      m_d[0].m_distMat.data(), sizeof(float)  * );
+// 			memcpy(mxGetData(funcBObj),      m_d[1].m_distMat.data(), sizeof(float)  * m_d[1].m_L->m_nVertices * m_corData.size());
+			*((int*)mxGetData(nBasesObj)) = nBases;
+			*((int*)mxGetData(nKprimObj)) = Kprim;//20131106
+			*((int*)mxGetData(nKObj))     = K;//20131106
+
+			engPutVariable(m_engine, "eigValueX", eigValueAObj);
+			engPutVariable(m_engine, "eigValueY", eigValueBObj);
+			engPutVariable(m_engine, "eigVectorX", eigVectorAObj);
+			engPutVariable(m_engine, "eigVectorY", eigVectorBObj);
+			engPutVariable(m_engine, "F1", funcAObj);
+			engPutVariable(m_engine, "G1", funcBObj);
+			engPutVariable(m_engine, "nBases", nBasesObj);
+			engPutVariable(m_engine, "Kprim",nKprimObj);//20131106
+			engPutVariable(m_engine, "K",nKObj);//20131106
+			engPutVariable(m_engine, "DX1", areaWeightAObj);//20131106
+			engPutVariable(m_engine, "DY1", areaWeightBObj);//20131106
+
+
+  			engEvalString(m_engine, "cd('D:\\FUNMAP\\GeometryProcessing\\src\\matlab')");
+  			engEvalString(m_engine, "[newBaseX, newBaseY] = computeNewBases(eigValueX, eigValueY, eigVectorX, eigVectorY, F1, G1, nBases)");
+
+// 			engEvalString(m_engine,"opt.weightinnerproduct=0;opt.offdiagterm=2;mu = 0.132;");
+//  			engEvalString(m_engine, "cd('D:\\FUNMAP\\GeometryProcessing\\src\\matlab\\testcoupled')");
+//  			engEvalString(m_engine, "[newBaseX,newBaseY]=y_jadAB(WX1,DX1,eigVectorX,eigValueX,WY1,DY1,eigVectorY,eigValueY,F1,G1)");
+
+			
+// 			engEvalString(m_engine, "cd('D:\\FUNMAP\\GeometryProcessing\\src\\matlab\\m_coupled')");
+// 			engEvalString(m_engine, "[newBaseX,newBaseY]=test_1129(WX1,DX1,eigVectorX,eigValueX,WY1,DY1,eigVectorY,eigValueY,F1,G1)");
+
+
+			mxArray* newBaseAObj = engGetVariable(m_engine, "newBaseX");
+			mxArray* newBaseBObj = engGetVariable(m_engine, "newBaseY");
+			if (!newBaseAObj || !newBaseBObj)
+			{
+				goto END;
+			}
+			double*  newBaseA    = (double*)mxGetData(newBaseAObj);
+			double*  newBaseB    = (double*)mxGetData(newBaseBObj);
+			float *  baseAPtr    = m_d[0].m_baseFunctions.data();
+			float *  baseBPtr    = m_d[1].m_baseFunctions.data();			
+			
+			for (int i = 0; i < m_d[0].m_L->m_nVertices * nBases;i++)
+			{
+				baseAPtr[i] = newBaseA[i];				
+			}			
+				
+			
+
+			for (int i = 0; i < m_d[1].m_L->m_nVertices * nBases;i++)
+			{
+				baseBPtr[i] = newBaseB[i];			
+			}
+			
+
+			mxDestroyArray(newBaseAObj);
+			mxDestroyArray(newBaseBObj);
+
+
+			mxDestroyArray(eigValueAObj);
+			mxDestroyArray(eigVectorAObj);
+			mxDestroyArray(funcAObj);
+			mxDestroyArray(eigValueBObj);
+			mxDestroyArray(eigVectorBObj);
+			mxDestroyArray(funcBObj);
+			mxDestroyArray(nBasesObj);
+
+END:
+			if (m_engine)
+			{
+				engClose(m_engine);
+				m_engine = NULL;
+			}
+
+			//输出新基20131126
+			float* tp = m_d[0].m_baseFunctions.data();
+			std::fstream outnewbasex("D:\\newbasesX.txt",ios::out);
+			for (int i = 0; i < m_d[0].m_L->m_nVertices * nBases;i++)
+			{
+				outnewbasex << tp[i]/*baseAPtr[i]*/ << " ";	//输出新基20131126
+			}
+			outnewbasex.close();	
+			tp = m_d[1].m_baseFunctions.data();
+			std::fstream outnewbasey("D:\\newbasesY.txt",ios::out);
+			for (int i = 0; i < m_d[1].m_L->m_nVertices * nBases;i++)
+			{
+				outnewbasey<< tp[i]/*baseBPtr[i]*/<< " ";//输出新基20131126
+			}
+			outnewbasey.close();
+
+		}

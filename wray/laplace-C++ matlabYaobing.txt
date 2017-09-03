@@ -1,0 +1,173 @@
+		void CageReverse::cal_M_L_mesh(Mesh *mesh1)
+		{	
+			fstream op("f:\\meshlap.txt",ios::out);
+			cal_M_L_matrix(cage_1);
+			delta_matrix_.resize(mesh_v_num,3);
+			/*Dynamic*/SparseMatrix<double> M_mesh_matrix(3*mesh_v_num,3*mesh_v_num);
+			/*Dynamic*/SparseMatrix<double> L_mesh_matrix(3*mesh_v_num,3*mesh_v_num);
+			delta_matrix_.setZero();
+			M_mesh_matrix.setZero();
+			L_mesh_matrix.setZero();
+			Matrix3d iden;
+			iden.setIdentity();
+			vector<int> neighberhood;//用来存放顶点i和邻域内顶点的索引
+			int i=0;
+			for(Mesh::VertexIter vit=mesh1->vertices_begin();vit!=mesh1->vertices_end();++vit)
+			{
+				neighberhood.clear();
+				int vnum=mesh1->valence(vit.handle());//获得顶点i的度
+				int vid=vit.handle().idx();//该点的索引id
+				neighberhood.push_back(vid);
+				Mesh::Point vp=mesh1->point(vit.handle());
+				Vector3d pp(vp[0],vp[1],vp[2]);
+				delta_matrix_.row(i)=pp;
+
+				MatrixXd A(3*(vnum+1),7);//Ai是一个3(vnum+1)*7的矩阵
+				A.setZero();
+				MatrixXd submatrix(3,4);//用来记录每个顶点对应的块
+				//索引i的顶点对应的块
+				submatrix.setZero();
+				submatrix(0,0)=vp[0];submatrix(0,2)=vp[2];submatrix(0,3)=-vp[1];
+				submatrix(1,0)=vp[1];submatrix(1,1)=-vp[2];submatrix(1,3)=vp[0];
+				submatrix(2,0)=vp[2];submatrix(2,1)=vp[1];submatrix(2,2)=-vp[0];
+				A.block(0,0,3,4)=submatrix;A.block(0,4,3,3)=iden;
+				int co=1;
+				//构造邻域点的块
+				for(Mesh::VVIter vvit=mesh1->vv_iter(vit.handle());vvit;++vvit)
+				{
+					
+					vid=vvit.handle().idx();
+					neighberhood.push_back(vid);
+					vp=mesh1->point(vvit.handle());
+					Vector3d ptem(vp[0],vp[1],vp[2]);
+					delta_matrix_.row(i)-=ptem/vnum;//计算laplace算子
+
+					submatrix.setZero();
+					submatrix(0,0)=vp[0];submatrix(0,2)=vp[2];submatrix(0,3)=-vp[1];
+					submatrix(1,0)=vp[1];submatrix(1,1)=-vp[2];submatrix(1,3)=vp[0];
+					submatrix(2,0)=vp[2];submatrix(2,1)=vp[1];submatrix(2,2)=-vp[0];
+					A.block(co*3,0,3,4)=submatrix;A.block(co*3,4,3,3)=iden;
+					++co;
+				}
+				//（si,hi,ti）=inverse(Ai'Ai)*Ai'bi，下面计算的就是bi的系数矩阵
+				MatrixXd tem_A=(A.transpose()*A).inverse()*(A.transpose());
+				//用tem_A中的行表示s,h,t（因为laplace算子不存在平移，所以下面表示的式子中忽略平移量t）
+				MatrixXd Ti_delta(3,3*(vnum+1));
+				Ti_delta.row(0) = tem_A.row(0)*delta_matrix_(i,0) - tem_A.row(3)*delta_matrix_(i,1) + tem_A.row(2)*delta_matrix_(i,2) ;
+				Ti_delta.row(1) = tem_A.row(3)*delta_matrix_(i,0) + tem_A.row(0)*delta_matrix_(i,1) - tem_A.row(1)*delta_matrix_(i,2) ;
+				Ti_delta.row(2) =-tem_A.row(2)*delta_matrix_(i,0) + tem_A.row(1)*delta_matrix_(i,1) + tem_A.row(0)*delta_matrix_(i,2) ;
+				//构造M_matrix矩阵，针对每个顶点对应M和L矩阵中的三行，在用到的顶点集的对应位置上写出相应的系数矩阵
+				for(int m=0;m<neighberhood.size();++m)
+				{
+					//M_mesh_matrix_.block(i*3,3*neighberhood[m],3,3)=Ti_delta.block(0,3*m,3,3);
+					for(int mm=0;mm<3;++mm)
+					{
+						for(int nn=0;nn<3;++nn)
+						{
+							if(Ti_delta(mm,3*m+nn)!=0)
+							{
+								M_mesh_matrix.coeffRef(i*3+mm,3*neighberhood[m]+nn)=Ti_delta(mm,3*m+nn);
+							}
+						}
+					}
+					if(m==0)//顶点i
+					{
+						//L_mesh_matrix_.block(i*3,3*neighberhood[m],3,3)=iden;
+						for(int mm=0;mm<3;++mm)
+						{	for(int nn=0;nn<3;++nn)
+						    {
+							   if(iden(mm,nn)!=0)
+								L_mesh_matrix.coeffRef(i*3+mm,3*neighberhood[m]+nn)=iden(mm,nn);
+						     }
+						}
+					}
+					else//相邻顶点集
+						{
+							//L_mesh_matrix_.block(i*3,3*neighberhood[m],3,3)=-1.0/(double)vnum*iden;
+							for(int mm=0;mm<3;++mm)
+							{	for(int nn=0;nn<3;++nn)
+							    {
+								  if(iden(mm,nn)!=0)
+									L_mesh_matrix.coeffRef(i*3+mm,3*neighberhood[m]+nn)=-1.0/(double)vnum*iden(mm,nn);
+							     }
+							}
+					    }
+				}
+				++i;//自增顶点索引，进入计算下一个顶点的
+			}
+			ML_matrix_mesh_=Fai_matrix_.transpose()*(M_mesh_matrix-L_mesh_matrix).transpose()*(M_mesh_matrix-L_mesh_matrix)*Fai_matrix_;
+			op<<"MLMatrix is "<<endl<<ML_matrix_mesh_<<endl;
+			MatrixXd A=weight2*(M_matrix_-L_matrix_).transpose()*(M_matrix_-L_matrix_)+weight1*Fai_matrix_.transpose()*Fai_matrix_+weight3*ML_matrix_mesh_;
+			LDLT<MatrixXd> cholasky(A);	
+			op.close();
+		}
+***************************************
+	void Mesh::ComputeLaplacian() 
+          {
+		
+		IndexType vi, vj;
+
+		// sparse matrices are initialized using list of triplets (row,col,value)
+		M.resize(3*nbV,3*nbV);
+		vector<SparseMatrixTriplet> tripletM;//typedef Eigen::Triplet<ScalarType,IndexType> SparseMatrixTriplet;
+		tripletM.reserve(3*9*nbV*6);
+
+		for(vi = 0 ; vi < nbV ; ++vi) {
+
+			int Ni = vvNbNeighbors(vi);
+			ScalarType wi = (1.0/Ni);
+
+			Eigen::Matrix<ScalarType,Eigen::Dynamic,7> Ai;
+			Ai.setZero(3*(Ni+1),7);
+			Eigen::Matrix<ScalarType,3,Eigen::Dynamic> Li;
+			Li.setZero(3,3*(Ni+1));
+			
+			assignblock2(getCurrentPose(vi),1.0,Ai,0);
+			assignblock1(1,Li,0);
+			for(int j = 0 ; j < Ni ; ++j) {
+				vj = vvNeighbor(vi,j);
+				
+				assignblock2(getCurrentPose(vj),1.0,Ai,j+1);
+				assignblock1(-wi,Li,j+1);
+			}
+
+			Eigen::Matrix<ScalarType,Eigen::Dynamic,7> Ki;
+			Ki.setZero(3,7);
+
+			RowVector3 deltai = Li * Ai.col(0);
+			
+			assignblock2(deltai,0.0,Ki,0);
+
+			Eigen::Matrix<ScalarType,7,7> AAinv = Ai.transpose() * Ai;
+
+			AAinv = AAinv.inverse();
+
+			Eigen::Matrix<ScalarType,3,Eigen::Dynamic> Ui;
+			Ui.resize(3,3*(Ni+1));
+			Ui = (Ki * AAinv * Ai.transpose()) - Li;
+
+			for(int kr = 0 ; kr < 3 ; ++kr) {
+				for(int kc = 0 ; kc < 3 ; ++kc) {
+					tripletM.push_back(SparseMatrixTriplet(3*vi+kr,3*vi+kc,Ui(kr,kc)));
+				}
+			}
+			for(int j = 0 ; j < Ni ; ++j) {
+				vj = vvNeighbor(vi,j);
+				
+				for(int kr = 0 ; kr < 3 ; ++kr) {
+					for(int kc = 0 ; kc < 3 ; ++kc) {
+						tripletM.push_back(SparseMatrixTriplet(3*vi+kr,3*vj+kc,Ui(kr,3*(j+1)+kc)));
+					}
+				}
+			}
+
+		}
+
+		M.setFromTriplets(tripletM.begin(),tripletM.end());
+
+		MM.resize(3*nbV,3*nbV);
+		MM = M.transpose() * M;
+
+	}
+**************************
+/*Dynamic*/SparseMatrix<double> L_mesh_matrix;
